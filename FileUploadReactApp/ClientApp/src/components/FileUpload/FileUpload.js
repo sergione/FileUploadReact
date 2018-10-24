@@ -1,29 +1,14 @@
 import * as React from 'react';
 import PropTypes from 'prop-types';
 import styled from 'styled-components';
-import Dropzone from 'react-dropzone';
 import Files from './Files';
-import {Button} from 'react-bootstrap';
 import axios from 'axios';
 import toastr from 'toastr';
+import SafeDropzone from "./SafeDropzone";
 
 const StyledFileUpload = styled.div`
   width: 400px;
-  height: 200px;
-`;
-
-const dropzoneStyle = {
-  width: "400px",
-  height: "200px", 
-  display: "table-cell",
-  verticalAlign: "middle",
-  border: "2px dashed #CCC"};
-
-const dropzoneMessageStyle = {
-  textAlign: "center", 
-  display: "inline-cell", 
-  margin: "10px"  
-};
+  height: 200px;`;
 
 class FileUpload extends React.Component {
   constructor(props) {
@@ -31,24 +16,39 @@ class FileUpload extends React.Component {
     this.state = {
       files: [],
       progress: [] ,
-      uploadComplete: false
+      uploadComplete: false,
+      uploadInProgress: false
     }
   }
   
   handleDrop = (files) => {
     if (this.props.maxFiles && this.props.maxFiles < files.length){
-      toastr.error(`Please drop ${this.props.maxFiles} files or less. You dropped ${files.length} files!`)
+      toastr.error(`Please drop ${this.props.maxFiles} files or less. You dropped ${files.length} files!`);
       return;
     }
+    const maxFileSize = this.props.maxSize * 1024 * 1024;            
+    let acceptedFiles = files.filter(f => f.size <= maxFileSize);
+        
+    if (this.props.accept) {
+      const acceptedFileTypes = this.props.accept.split(',');
+      const isAccepted = (name) => {
+        const acceptedTypes = acceptedFileTypes.filter(f => name.endsWith(f));
+        return acceptedTypes.length > 0;
+      };
+      acceptedFiles = acceptedFiles.filter(f => isAccepted(f.name));
+    }
     
-    let progress = Array(files.length).fill(0);
-    this.setState({files, progress}, this.props.uploadOnDrop
+    if (acceptedFiles.length === 0) return;
+    
+    let progress = Array(acceptedFiles.length).fill(0);
+    this.setState({files: acceptedFiles, progress: progress}, this.props.uploadOnDrop
       ? this.handleUpload
       : () => {}
     );
   };
   
   handleUpload = () => {
+    this.setState({uploadInProgress: true});
     for (let i = 0; i < this.state.files.length; i++) {
       let data = new FormData();
       data.append('file', this.state.files[i]);
@@ -58,10 +58,14 @@ class FileUpload extends React.Component {
           const percentCompleted = Math.round( (progressEvent.loaded * 100) / progressEvent.total );
           let progress = this.state.progress.slice();
           progress[i] = percentCompleted;
-          if (percentCompleted === 100) {
-            toastr.success(`${this.state.files[i].name} upload complete.`)
-          }
-          this.setState({progress}, this.isUploadComplete);
+          this.setState({progress}, () => {
+            if (progress[i] === 100) {
+              if (this.props.onComplete) {
+                this.props.onComplete(this.state.files[i]);
+              }
+            }
+            this.checkUploadComplete();
+          });
         }
       };
       
@@ -69,29 +73,29 @@ class FileUpload extends React.Component {
     }
   };
   
-  isUploadComplete = () => {
+  checkUploadComplete = () => {
     if (this.state.progress.every(x => x === 100)) {
-      this.setState({uploadComplete: true});
-      toastr.success("All files uploaded successfully!");
+      this.setState({uploadComplete: true, uploadInProgress: false});
+      if (this.props.onCompleteAll) {
+        this.props.onCompleteAll();
+      }
     }  
   };
   
   render() {
     return <StyledFileUpload>
-      <Dropzone 
-        style={dropzoneStyle} 
-        className=""
-        onDrop={this.handleDrop}
-      >
-        <div style={dropzoneMessageStyle}>Please drop files here or click to select files</div>
-      </Dropzone>
+      <SafeDropzone 
+        onDrop={this.handleDrop} 
+        disabled={this.state.uploadInProgress} 
+        children={this.props.children}/>
       <br/>
-      {this.props.showFiles && <div>
-        <Files 
-          files={this.state.files} 
-          progress={this.state.progress} />
-        {this.state.files.length > 0 && !this.props.uploadOnDrop &&<Button onClick={this.handleUpload}>Upload</Button>}
-      </div>}  
+      {this.props.showFiles && <Files
+          files={this.state.files}
+          progress={this.state.progress}
+          uploadOnDrop={this.props.uploadOnDrop}
+          uploadInProgress={this.state.uploadInProgress}
+          onUpload={this.handleUpload}
+        />}
     </StyledFileUpload>;
   }
 }
@@ -100,13 +104,18 @@ FileUpload.propTypes = {
   maxFiles: PropTypes.number,
   uploadOnDrop: PropTypes.bool,
   showFiles: PropTypes.bool,
-  endpoint: PropTypes.string.isRequired
+  endpoint: PropTypes.string.isRequired,
+  onComplete: PropTypes.func,
+  onCompleteAll: PropTypes.func,
+  maxSize: PropTypes.number,
+  accept: PropTypes.string
 };
 
 FileUpload.defaultProps = {
   maxFiles: 15,
   uploadOnDrop: true,
-  showFiles: true
+  showFiles: true,
+  maxSize: 100 // 100MB
 };
 
 export default FileUpload;
